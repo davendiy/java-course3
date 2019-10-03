@@ -1,0 +1,3 @@
+ColorRGB[red=1, green=2, blue=3]
+ColorHSL[hue=0,500000, saturation=0,300000, lightness=0,100000]
+ColorCMYK[cyan=24, magenta=25, yellow=152, black=64]
