@@ -4,6 +4,8 @@ import javax.swing.*;
 import javax.swing.filechooser.FileSystemView;
 import javax.swing.table.AbstractTableModel;
 import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Date;
 
 /**
@@ -25,14 +27,14 @@ class FileTableModel extends AbstractTableModel {
     private String[] columns = {
             "Icon",
             "File",
-            "Path/name",
             "Size",
+            "Type",
             "Last Modified",
             "R",
             "W",
             "E",
-            "D",
-            "F",
+//            "D",
+//            "F",
     };
 
     FileTableModel() {
@@ -43,6 +45,7 @@ class FileTableModel extends AbstractTableModel {
         this.files = files;
     }
 
+    @Override
     public Object getValueAt(int row, int column) {
         File file = files[row];
         switch (column) {
@@ -50,10 +53,26 @@ class FileTableModel extends AbstractTableModel {
                 return fileSystemView.getSystemIcon(file);
             case 1:
                 return fileSystemView.getSystemDisplayName(file);
-            case 2:
-                return file.getPath();
             case 3:
-                return file.length();
+                Path path = file.toPath();
+                String mimeType = "";
+                try {
+                    mimeType = Files.probeContentType(path);
+                    if (mimeType == null){
+                        if (file.isDirectory()){
+                            mimeType = "";
+                        } else {
+                            mimeType = "File";
+                        }
+                    }
+                } catch (Exception e){
+                    System.out.println("Error with getting type of file..");
+                    e.printStackTrace();
+                }
+
+                return mimeType;
+            case 2:
+                return humanReadableByteCount(file.length(), true);
             case 4:
                 return file.lastModified();
             case 5:
@@ -62,42 +81,54 @@ class FileTableModel extends AbstractTableModel {
                 return file.canWrite();
             case 7:
                 return file.canExecute();
-            case 8:
-                return file.isDirectory();
-            case 9:
-                return file.isFile();
+//            case 8:
+//                return file.isDirectory();
+//            case 9:
+//                return file.isFile();
             default:
                 System.err.println("Logic Error");
         }
         return "";
     }
 
+    @Override
     public int getColumnCount() {
         return columns.length;
     }
 
+    @Override
     public Class<?> getColumnClass(int column) {
         switch (column) {
             case 0:
                 return ImageIcon.class;
-            case 3:
+            case 2:
                 return Long.class;
             case 4:
                 return Date.class;
             case 5:
             case 6:
             case 7:
-            case 8:
-            case 9:
+//            case 8:
+//            case 9:
                 return Boolean.class;
         }
         return String.class;
     }
 
+    public static String humanReadableByteCount(long bytes, boolean si) {
+        int unit = si ? 1000 : 1024;
+        if (bytes < unit) return bytes + " B";
+        int exp = (int) (Math.log(bytes) / Math.log(unit));
+        String pre = (si ? "kMGTPE" : "KMGTPE").charAt(exp-1) + (si ? "" : "i");
+        return String.format("%.1f %sB", bytes / Math.pow(unit, exp), pre);
+    }
+
+    @Override
     public String getColumnName(int column) {
         return columns[column];
     }
 
+    @Override
     public int getRowCount() {
         return files.length;
     }

@@ -1,7 +1,7 @@
 
 package com.github.filemanager;
 
-import com.sun.source.tree.Tree;
+import jdk.jshell.spi.ExecutionControl;
 
 import java.awt.*;
 import java.awt.event.*;
@@ -15,11 +15,9 @@ import javax.swing.filechooser.FileSystemView;
 
 import javax.imageio.ImageIO;
 
-import java.lang.reflect.Array;
 import java.util.*;
 
 import java.io.*;
-import java.nio.channels.FileChannel;
 
 import java.net.URL;
 import java.util.List;
@@ -38,16 +36,16 @@ import java.util.List;
  * Includes support classes FileTableModel &amp; FileTreeCellRenderer.
 
  * TODO Bugs
- * <ul>
+ *  <ul>
  *     <li>Still throws occasional AIOOBEs and NPEs, so some update on
  *     the EDT must have been missed.</li>
  *     <li>Fix keyboard focus issues - especially when functions like
  *     rename/delete etc. are called that update nodes &amp; file lists.</li>
  *     <li>Needs more testing in general.</li>
- *  </ul>
+ *   </ul>
 
  * TODO Functionality
- * <ul>
+ *  <ul>
  *      <li>Implement Read/Write/Execute checkboxes
  *      <li>Implement Copy
  *      <li>Extra prompt for directory delete (camickr suggestion)
@@ -59,7 +57,7 @@ import java.util.List;
  *      <li>Implement history/back
  *      <li>Allow multiple selection
  *      <li>Add file search
- * </ul>
+ *  </ul>
  * @version 2011-06-01
  */
 
@@ -98,6 +96,7 @@ public class FileManager {
     private JLabel fileName;
 //    private JTextField path;
     private JTextField find;
+    private JTextField path;
     private JLabel date;
     private JLabel size;
     private JCheckBox readable;
@@ -132,6 +131,9 @@ public class FileManager {
             table.setAutoCreateRowSorter(true);
             table.setShowVerticalLines(false);
 
+            // FIXME need to change the way of getting file because table could be
+            //  sorted by builtin methods of swing.
+            //  Must be the way of getting name of selected file, it can help.
             listSelectionListener = lse -> {
                 int row = table.getSelectionModel().getLeadSelectionIndex();
                 setFileDetails( ((FileTableModel)table.getModel()).getFile(row) );
@@ -158,7 +160,7 @@ public class FileManager {
                                 showThrowable(ex);
                             }
                         }
-                    };
+                    }
                 }
             });
             JScrollPane tableScroll = new JScrollPane(table);
@@ -222,14 +224,19 @@ public class FileManager {
 
 
             // ---------------------------------- labels ---------------------------------------------------------------
-            fileDetailsLabels.add(new JLabel("File", JLabel.TRAILING));
-            fileName = new JLabel();
-            fileDetailsValues.add(fileName);
-
             fileDetailsLabels.add(new JLabel("Find:", JLabel.TRAILING));
             find = new JTextField(5);
             find.setEditable(true);
             fileDetailsValues.add(find);
+
+            fileDetailsLabels.add(new JLabel("File", JLabel.TRAILING));
+            fileName = new JLabel();
+            fileDetailsValues.add(fileName);
+
+            fileDetailsLabels.add(new JLabel("Path", JLabel.TRAILING));
+            path = new JTextField(5);
+            path.setEditable(false);
+            fileDetailsValues.add(path);
 
             fileDetailsLabels.add(new JLabel("Last Modified", JLabel.TRAILING));
             date = new JLabel();
@@ -384,7 +391,7 @@ public class FileManager {
         return gui;
     }
 
-    public void showRootFile() {
+    private void showRootFile() {
         // ensure the main files are displayed
         tree.setSelectionInterval(0,0);
     }
@@ -615,14 +622,15 @@ public class FileManager {
                 table.setRowHeight( icon.getIconHeight()+rowIconPadding );
 
                 setColumnWidth(0,-1);
-                setColumnWidth(3,60);
-                table.getColumnModel().getColumn(3).setMaxWidth(120);
-                setColumnWidth(4,-1);
+                setColumnWidth(2, 90);
+                setColumnWidth(3,140);
+//                table.getColumnModel().getColumn(3).setMaxWidth(120);
+                setColumnWidth(4,120);
                 setColumnWidth(5,-1);
                 setColumnWidth(6,-1);
                 setColumnWidth(7,-1);
-                setColumnWidth(8,-1);
-                setColumnWidth(9,-1);
+//                setColumnWidth(8,-1);
+//                setColumnWidth(9,-1);
 
                 cellSizesSet = true;
             }
@@ -643,6 +651,7 @@ public class FileManager {
         tableColumn.setMinWidth(width);
     }
 
+    // FIXME some shit randomly happens with finding.
     private void findChildren(final DefaultMutableTreeNode node){
         String pattern = find.getText();
         if (pattern.isEmpty()){
@@ -655,7 +664,7 @@ public class FileManager {
         fileTableModel.setFiles(empty);
         SwingWorker<Void, File> worker = new SwingWorker<>() {
             @Override
-            protected Void doInBackground() throws Exception {
+            protected Void doInBackground(){
                 File file = (File) node.getUserObject();
                 if (file.isDirectory()){
                     File[] files = fileSystemView.getFiles(file, true);
@@ -707,7 +716,7 @@ public class FileManager {
 
         SwingWorker<Void, File> worker = new SwingWorker<>() {
             @Override
-            protected Void doInBackground() throws Exception{
+            protected Void doInBackground(){
                 File file = (File) node.getUserObject();
                 if (file.isDirectory()) {
                     File[] files = fileSystemView.getFiles(file, true);   //!!
@@ -749,6 +758,7 @@ public class FileManager {
 //        path.setText(file.getPath());
         date.setText(new Date(file.lastModified()).toString());
         size.setText(file.length() + " bytes");
+        path.setText(file.getAbsolutePath());
         readable.setSelected(file.canRead());
         writable.setSelected(file.canWrite());
         executable.setSelected(file.canExecute());
@@ -767,59 +777,42 @@ public class FileManager {
         gui.repaint();
     }
 
-    public static boolean copyFile(File from, File to) throws IOException {
-
-        boolean created = to.createNewFile();
-
-        if (created) {
-            try (FileChannel fromChannel = new FileInputStream(from).getChannel(); FileChannel toChannel = new FileOutputStream(to).getChannel()) {
-
-                toChannel.transferFrom(fromChannel, 0, fromChannel.size());
-
-                // set the flags of the to the same as the from
-                to.setReadable(from.canRead());
-                to.setWritable(from.canWrite());
-                to.setExecutable(from.canExecute());
-            }
-        }
-        return created;
-
+    public static boolean copyFile(File from, File to) throws ExecutionControl.NotImplementedException {
+        throw new ExecutionControl.NotImplementedException("Not implemented.");
     }
 
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(new Runnable() {
-            public void run() {
-                try {
-                    // Significantly improves the look of the output in
-                    // terms of the file names returned by FileSystemView!
-                    UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-                } catch(Exception weTried) {
-                    System.out.println(weTried.toString());
-                }
-                JFrame f = new JFrame(APP_TITLE);
-                f.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-
-                FileManager fileManager = new FileManager();
-                f.setContentPane(fileManager.getGui());
-
-                try {
-                    URL urlBig = fileManager.getClass().getResource("fm-icon-32x32.png");
-                    URL urlSmall = fileManager.getClass().getResource("fm-icon-16x16.png");
-                    ArrayList<Image> images = new ArrayList<>();
-                    images.add( ImageIO.read(urlBig) );
-                    images.add( ImageIO.read(urlSmall) );
-                    f.setIconImages(images);
-                } catch(Exception weTried) {
-                    System.out.println(weTried.toString());
-                }
-
-                f.pack();
-                f.setLocationByPlatform(true);
-                f.setMinimumSize(f.getSize());
-                f.setVisible(true);
-
-                fileManager.showRootFile();
+        SwingUtilities.invokeLater(() -> {
+            try {
+                // Significantly improves the look of the output in
+                // terms of the file names returned by FileSystemView!
+                UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+            } catch(Exception weTried) {
+                System.out.println(weTried.toString());
             }
+            JFrame f = new JFrame(APP_TITLE);
+            f.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+
+            FileManager fileManager = new FileManager();
+            f.setContentPane(fileManager.getGui());
+
+            try {
+                URL urlBig = fileManager.getClass().getResource("fm-icon-32x32.png");
+                URL urlSmall = fileManager.getClass().getResource("fm-icon-16x16.png");
+                ArrayList<Image> images = new ArrayList<>();
+                images.add( ImageIO.read(urlBig) );
+                images.add( ImageIO.read(urlSmall) );
+                f.setIconImages(images);
+            } catch(Exception weTried) {
+                System.out.println(weTried.toString());
+            }
+
+            f.pack();
+            f.setLocationByPlatform(true);
+            f.setMinimumSize(f.getSize());
+            f.setVisible(true);
+
+            fileManager.showRootFile();
         });
     }
 }
