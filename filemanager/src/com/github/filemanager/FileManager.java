@@ -1,8 +1,6 @@
 
 package com.github.filemanager;
 
-import jdk.jshell.spi.ExecutionControl;
-
 import java.awt.*;
 import java.awt.event.*;
 
@@ -21,6 +19,10 @@ import java.io.*;
 
 import java.net.URL;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
+
 
 /**
  *
@@ -58,15 +60,17 @@ import java.util.List;
  *      <li>Allow multiple selection
  *      <li>Add file search
  *  </ul>
- * @version 2011-06-01
+ *
  */
 
 public class FileManager {
 
     /** Title of the application */
     private static final String APP_TITLE = "FileMan";
+
     /** Used to open/edit/print files. */
     private Desktop desktop;
+
     /** Provides nice icons and names for files. */
     private FileSystemView fileSystemView;
 
@@ -85,16 +89,15 @@ public class FileManager {
     private JProgressBar progressBar;
     private JButton stop;
 
-
     /** Table model for File[]. */
     private FileTableModel fileTableModel;
     private ListSelectionListener listSelectionListener;
+    private MouseListener mouseListener;
     private boolean cellSizesSet = false;
     private int rowIconPadding = 6;
 
     /* File details. */
     private JLabel fileName;
-//    private JTextField path;
     private JTextField find;
     private JTextField path;
     private JLabel date;
@@ -105,6 +108,7 @@ public class FileManager {
     private JRadioButton isDirectory;
     private JRadioButton isFile;
 
+    /* Flag for searching in thread. */
     private boolean stopFinding = true;
 
     /* GUI options/containers for new File/Directory creation.  Created lazily. */
@@ -112,8 +116,13 @@ public class FileManager {
     private JRadioButton newTypeFile;
     private JTextField name;
 
+    /**
+     * Returns main gui or creates it if it doesn't exist.
+     */
     public Container getGui() {
         if (gui==null) {
+
+            // ============================== main settings ============================================================
             gui = new JPanel(new BorderLayout(3,3));
             gui.setBorder(new EmptyBorder(5,5,5,5));
 
@@ -121,25 +130,30 @@ public class FileManager {
             desktop = Desktop.getDesktop();
 
             JPanel detailView = new JPanel(new BorderLayout(3,3));
-            //fileTableModel = new FileTableModel();
-
 
             // ================================ table ==================================================================
 
             table = new JTable();
             table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-            table.setAutoCreateRowSorter(true);
+            table.setAutoCreateRowSorter(false);
             table.setShowVerticalLines(false);
 
             // FIXME need to change the way of getting file because table could be
             //  sorted by builtin methods of swing.
             //  Must be the way of getting name of selected file, it can help.
+
+            // If user selects some row on a table the information about selected file is being printed
+            // on the bar below.
             listSelectionListener = lse -> {
                 int row = table.getSelectionModel().getLeadSelectionIndex();
                 setFileDetails( ((FileTableModel)table.getModel()).getFile(row) );
             };
             table.getSelectionModel().addListSelectionListener(listSelectionListener);
-            table.addMouseListener(new MouseAdapter() {
+
+
+            // If user clicks twice on a some directory it opens in explorer.
+            // If user clicks twice on a some file the program tries to open it via system's services.
+            mouseListener = new MouseAdapter() {
                 @Override
                 public void mouseClicked(MouseEvent e) {
                     if (e.getClickCount() == 2){
@@ -162,7 +176,34 @@ public class FileManager {
                         }
                     }
                 }
-            });
+            };
+            table.addMouseListener(mouseListener);
+
+            // sorting of columns.
+            // I don't know why it doesn't work, so i decided to skip it now
+//            tableSortListener = new RowSorterListener() {
+//                @Override
+//                public void sorterChanged(RowSorterEvent rowSorterEvent) {
+////                    File[] new_files = new File[table.getRowCount()];
+////                    FileTableModel model = (FileTableModel) table.getModel();
+////                    int tmp;
+////                    for (int i = 1; i < table.getRowCount(); i++){
+////                        tmp = rowSorterEvent.convertPreviousRowIndexToModel(i);
+////                        new_files[tmp] = model.getFile(i);
+////                    }
+////                    model.setFiles(new_files);
+//
+//                    System.out.println(rowSorterEvent.getType());
+//                    System.out.println(rowSorterEvent.getSource());
+//                    System.out.println(rowSorterEvent.getPreviousRowCount());
+//                    System.out.println(rowSorterEvent.convertPreviousRowIndexToModel(0));
+//                    if (rowSorterEvent.convertPreviousRowIndexToModel(0) != -1){
+//                        System.out.println(((FileTableModel)table.getModel()).getFile(rowSorterEvent.convertPreviousRowIndexToModel(0)));
+//                    }
+//                    System.out.println("========================");
+//                }
+//            };
+
             JScrollPane tableScroll = new JScrollPane(table);
             Dimension d = tableScroll.getPreferredSize();
             tableScroll.setPreferredSize(new Dimension((int)d.getWidth(), (int)d.getHeight()/2));
@@ -172,6 +213,7 @@ public class FileManager {
             DefaultMutableTreeNode root = new DefaultMutableTreeNode();
             treeModel = new DefaultTreeModel(root);
 
+            // Click on the node from the tree causes opening of it
             TreeSelectionListener treeSelectionListener = tse -> {
                 DefaultMutableTreeNode node =
                         (DefaultMutableTreeNode)tse.getPath().getLastPathComponent();
@@ -184,25 +226,21 @@ public class FileManager {
             for (File fileSystemRoot : roots) {
                 DefaultMutableTreeNode node = new DefaultMutableTreeNode(fileSystemRoot);
                 root.add( node );
-                //showChildren(node);
-                //
                 File[] files = fileSystemView.getFiles(fileSystemRoot, true);
                 for (File file : files) {
                     if (file.isDirectory()) {
                         node.add(new DefaultMutableTreeNode(file));
                     }
                 }
-                //
             }
 
             tree = new JTree(treeModel);
             tree.setRootVisible(false);
             tree.addTreeSelectionListener(treeSelectionListener);
             tree.setCellRenderer(new FileTreeCellRenderer());
+            tree.setExpandsSelectedPaths(true);
             tree.expandRow(0);
             JScrollPane treeScroll = new JScrollPane(tree);
-
-            // as per trashgod tip
             tree.setVisibleRowCount(15);
 
             Dimension preferredSize = treeScroll.getPreferredSize();
@@ -266,19 +304,13 @@ public class FileManager {
             toolBar.setFloatable(false);
 
             // -------------------------------------- buttons ----------------------------------------------------------
-            JButton openFile = new JButton("Open");
-            openFile.setMnemonic('o');
 
-            openFile.addActionListener(ae -> {
-                try {
-                    desktop.open(currentFile);
-                } catch(Throwable t) {
-                    showThrowable(t);
-                }
-                gui.repaint();
-            });
-            toolBar.add(openFile);
+            // flag for using the regular expressions during searching
+            JCheckBox regex = new JCheckBox("Regex");
+            regex.setSelected(false);
 
+            // Find all the files with name that contains the given string or
+            // matches the given regular expression
             JButton findFile = new JButton("Find");
             findFile.setMnemonic(KeyEvent.VK_ENTER);
             findFile.addActionListener(ae -> {
@@ -287,12 +319,17 @@ public class FileManager {
                     DefaultMutableTreeNode currentNode =
                                 (DefaultMutableTreeNode)currentPath.getLastPathComponent();
                     stopFinding = false;
-                    findChildren(currentNode);
+                    if (regex.isSelected()){
+                        findChildrenRegex(currentNode);
+                    } else {
+                        findChildren(currentNode);
+                    }
                 }
             });
             toolBar.add(findFile);
+            toolBar.add(regex);
 
-
+            // Try to edit selected file via system's services
             JButton editFile = new JButton("Edit");
             editFile.setMnemonic('e');
             editFile.addActionListener(ae -> {
@@ -304,6 +341,7 @@ public class FileManager {
             });
             toolBar.add(editFile);
 
+            // Tries to print selected file via system's services
             JButton printFile = new JButton("Print");
             printFile.setMnemonic('p');
             printFile.addActionListener(ae -> {
@@ -316,28 +354,32 @@ public class FileManager {
             toolBar.add(printFile);
 
             // Check the actions are supported on this platform!
-            openFile.setEnabled(desktop.isSupported(Desktop.Action.OPEN));
             editFile.setEnabled(desktop.isSupported(Desktop.Action.EDIT));
             printFile.setEnabled(desktop.isSupported(Desktop.Action.PRINT));
 
             toolBar.addSeparator();
 
+            // Create new file or directory
             JButton newFile = new JButton("New");
             newFile.setMnemonic('n');
             newFile.addActionListener(ae -> newFile());
             toolBar.add(newFile);
 
+            // Copy selected file
+            // Not implemented still
             JButton copyFile = new JButton("Copy");
             copyFile.setMnemonic('c');
             copyFile.addActionListener(ae -> showErrorMessage("'Copy' not implemented.",
                     "Not implemented."));
             toolBar.add(copyFile);
 
+            // Rename selected file/directory
             JButton renameFile = new JButton("Rename");
             renameFile.setMnemonic('r');
             renameFile.addActionListener(ae -> renameFile());
             toolBar.add(renameFile);
 
+            // Delete selected file/directory
             JButton deleteFile = new JButton("Delete");
             deleteFile.setMnemonic('d');
             deleteFile.addActionListener(ae -> deleteFile());
@@ -345,19 +387,17 @@ public class FileManager {
 
             toolBar.addSeparator();
 
+            // ----------------------------------- file's properties ---------------------------------------------------
             readable = new JCheckBox("Read  ");
             readable.setMnemonic('a');
-            //readable.setEnabled(false);
             toolBar.add(readable);
 
             writable = new JCheckBox("Write  ");
             writable.setMnemonic('w');
-            //writable.setEnabled(false);
             toolBar.add(writable);
 
             executable = new JCheckBox("Execute");
             executable.setMnemonic('x');
-            //executable.setEnabled(false);
             toolBar.add(executable);
 
             JPanel fileView = new JPanel(new BorderLayout(3,3));
@@ -396,6 +436,11 @@ public class FileManager {
         tree.setSelectionInterval(0,0);
     }
 
+    /**
+     * Find file in the tree.
+     * @param find - file that user selected on the table.
+     * @return     - whole path from the root to respective node.
+     */
     private TreePath findTreePath(File find) {
         for (int ii=0; ii<tree.getRowCount(); ii++) {
             TreePath treePath = tree.getPathForRow(ii);
@@ -411,16 +456,22 @@ public class FileManager {
         return null;
     }
 
+    /**
+     * Handler that tries to rename the selected file.
+     */
     private void renameFile() {
         if (currentFile==null) {
             showErrorMessage("No file selected to rename.","Select File");
+            return;
+        }
+        if (currentFile.isDirectory()){
+            showErrorMessage("Renaming of the directory is not implemented.", "Don't use.");
             return;
         }
 
         String renameTo = JOptionPane.showInputDialog(gui, "New Name");
         if (renameTo!=null) {
             try {
-                boolean directory = currentFile.isDirectory();
                 TreePath parentPath = findTreePath(currentFile.getParentFile());
                 DefaultMutableTreeNode parentNode =
                         (DefaultMutableTreeNode)parentPath.getLastPathComponent();
@@ -428,19 +479,6 @@ public class FileManager {
                 boolean renamed = currentFile.renameTo(new File(
                         currentFile.getParentFile(), renameTo));
                 if (renamed) {
-                    if (directory) {
-                        // rename the node..
-
-                        // delete the current node..
-                        TreePath currentPath = findTreePath(currentFile);
-                        System.out.println(currentPath);
-                        DefaultMutableTreeNode currentNode =
-                                (DefaultMutableTreeNode)currentPath.getLastPathComponent();
-
-                        treeModel.removeNodeFromParent(currentNode);
-
-                        // add a new node..
-                    }
 
                     showChildren(parentNode);
                 } else {
@@ -456,6 +494,10 @@ public class FileManager {
         gui.repaint();
     }
 
+    /**
+     * Handler that tries to delete the selected file or directory.
+     * If directory isn't empty - it won't be deleted.
+     */
     private void deleteFile() {
         if (currentFile==null) {
             showErrorMessage("No file selected for deletion.","Select File");
@@ -507,12 +549,16 @@ public class FileManager {
         gui.repaint();
     }
 
+    /**
+     * Handler that tries to create a new file or directory.
+     */
     private void newFile() {
         if (currentFile==null) {
             showErrorMessage("No location selected for new file.","Select Location");
             return;
         }
 
+        // Creates the dialog
         if (newFilePanel==null) {
             newFilePanel = new JPanel(new BorderLayout(3,3));
 
@@ -537,6 +583,7 @@ public class FileManager {
                 newFilePanel,
                 "Create File",
                 JOptionPane.OK_CANCEL_OPTION);
+
         if (result==JOptionPane.OK_OPTION) {
             try {
                 boolean created;
@@ -559,11 +606,6 @@ public class FileManager {
                     if (file.isDirectory()) {
                         // add the new node..
                         DefaultMutableTreeNode newNode = new DefaultMutableTreeNode(file);
-
-                        TreePath currentPath = findTreePath(currentFile);
-                        DefaultMutableTreeNode currentNode =
-                                (DefaultMutableTreeNode)currentPath.getLastPathComponent();
-
                         treeModel.insertNodeInto(newNode, parentNode, parentNode.getChildCount());
                     }
 
@@ -581,6 +623,9 @@ public class FileManager {
         gui.repaint();
     }
 
+    /**
+     * Shows error message for user.
+     */
     private void showErrorMessage(String errorMessage, String errorTitle) {
         JOptionPane.showMessageDialog(
                 gui,
@@ -590,6 +635,9 @@ public class FileManager {
         );
     }
 
+    /**
+     * Shows exception for user.
+     */
     private void showThrowable(Throwable t) {
         t.printStackTrace();
         JOptionPane.showMessageDialog(
@@ -601,7 +649,12 @@ public class FileManager {
         gui.repaint();
     }
 
-    /** Update the table on the EDT */
+    /**
+     * Update the data on the table.
+     * @param files - array of files that must be inserted into the table.
+     * @param add   - true if files must be added to the end of the table
+     *                false if all the previous data must be deleted and the files must the new data
+     */
     private void setTableData(final File[] files, boolean add) {
         SwingUtilities.invokeLater(() -> {
             if (fileTableModel==null) {
@@ -609,12 +662,16 @@ public class FileManager {
                 table.setModel(fileTableModel);
             }
             table.getSelectionModel().removeListSelectionListener(listSelectionListener);
+            table.removeMouseListener(mouseListener);
             if (add) {
                 fileTableModel.addFiles(files);
             } else {
                 fileTableModel.setFiles(files);
             }
             table.getSelectionModel().addListSelectionListener(listSelectionListener);
+            table.addMouseListener(mouseListener);
+
+            // called during creation
             if (!cellSizesSet) {
                 Icon icon = fileSystemView.getSystemIcon(files[0]);
 
@@ -624,19 +681,21 @@ public class FileManager {
                 setColumnWidth(0,-1);
                 setColumnWidth(2, 90);
                 setColumnWidth(3,140);
-//                table.getColumnModel().getColumn(3).setMaxWidth(120);
                 setColumnWidth(4,120);
                 setColumnWidth(5,-1);
                 setColumnWidth(6,-1);
                 setColumnWidth(7,-1);
-//                setColumnWidth(8,-1);
-//                setColumnWidth(9,-1);
 
                 cellSizesSet = true;
             }
         });
     }
 
+    /**
+     * Set the width of the given column
+     * @param column - number of the column
+     * @param width  - the required width
+     */
     private void setColumnWidth(int column, int width) {
         TableColumn tableColumn = table.getColumnModel().getColumn(column);
         if (width<0) {
@@ -651,21 +710,123 @@ public class FileManager {
         tableColumn.setMinWidth(width);
     }
 
-    // FIXME some shit randomly happens with finding.
+    /**
+     * Find all (via DFS) the files and directories in the selected directory (on the tree) with name that
+     * contains the string that user entered to TextEntry 'Find'.
+     *
+     * @param node - selected node on the tree.
+     */
     private void findChildren(final DefaultMutableTreeNode node){
         String pattern = find.getText();
         if (pattern.isEmpty()){
             return;
         }
-        progressBar.setVisible(true);
+        progressBar.setVisible(true);      // prepare the progress bar
+        progressBar.setIndeterminate(true);
+        stop.setVisible(true);
+        File[] empty = new File[0];
+        fileTableModel.setFiles(empty);   // clear all the data from table
+
+        // worker that does all the work
+        SwingWorker<Void, File> worker = new SwingWorker<>() {
+
+            /**
+             * what it should do:
+             *    search all the required files and put them to the built queue in order to
+             *    add them to the table later.
+             */
+            @Override
+            protected Void doInBackground(){
+                File file = (File) node.getUserObject();
+                if (file.isDirectory()){
+                    File[] files = fileSystemView.getFiles(file, true);
+
+                    // auxiliary que for DFS
+                    ArrayDeque<File> queue = new ArrayDeque<>(Arrays.asList(files));
+                    while (!queue.isEmpty()){
+                        if (stopFinding){
+                            break;
+                        }
+
+                        File tmp = queue.pop();
+                        if (tmp.isDirectory()){
+                            queue.addAll(Arrays.asList(fileSystemView.getFiles(tmp, true)));
+                        }
+                        String name = tmp.getName();
+                        if (name.contains(pattern)){
+                            publish(tmp);   // add file to the table later
+
+                        }
+                    }
+
+                }
+                return null;
+            }
+
+            /**
+             * Process some piece of built queue of data (that pushed by method 'publish')
+             * @param chunks - list of files that must be added to the table.
+             */
+            @Override
+            protected void process(List<File> chunks){
+                File[] tmp = new File[chunks.size()];    // transform List to array
+                for (int i=0; i < chunks.size(); i++){
+                    tmp[i] = chunks.get(i);
+                }
+                setTableData(tmp, true);
+            }
+
+            /**
+             * Finish the work.
+             */
+            protected void done(){
+
+                progressBar.setIndeterminate(false);
+                progressBar.setVisible(false);
+                stop.setVisible(false);
+            }
+        };
+        worker.execute();
+    }
+
+    /**
+     * Find all (via DFS) the files and directories in the selected directory (on the tree) with name that
+     * matches the regex that user entered to TextEntry 'Find'.
+     *
+     * @param node - selected node on the tree.
+     */
+    private void findChildrenRegex(final DefaultMutableTreeNode node){
+        String input = find.getText();
+
+        if (input.isEmpty()){
+            return;
+        }
+        Pattern pattern;   // check if pattern is valid
+        try {
+            pattern = Pattern.compile(input);
+        } catch (PatternSyntaxException e){
+            showErrorMessage("Invalid regex", "Invalid regular expression.");
+            return;
+        }
+
+        progressBar.setVisible(true);         // prepare the progress bar
         progressBar.setIndeterminate(true);
         stop.setVisible(true);
         File[] empty = new File[0];
         fileTableModel.setFiles(empty);
+
+        // worker that does all the work
         SwingWorker<Void, File> worker = new SwingWorker<>() {
+
+            /**
+             * what it should do:
+             *    search all the required files and put them to the built queue in order to
+             *    add them to the table later.
+             */
             @Override
             protected Void doInBackground(){
                 File file = (File) node.getUserObject();
+                Matcher match;
                 if (file.isDirectory()){
                     File[] files = fileSystemView.getFiles(file, true);
                     ArrayDeque<File> queue = new ArrayDeque<>(Arrays.asList(files));
@@ -679,9 +840,9 @@ public class FileManager {
                             queue.addAll(Arrays.asList(fileSystemView.getFiles(tmp, true)));
                         }
                         String name = tmp.getName();
-                        if (name.contains(pattern)){
+                        match = pattern.matcher(name);
+                        if (match.matches()){
                             publish(tmp);
-
                         }
                     }
 
@@ -689,16 +850,25 @@ public class FileManager {
                 return null;
             }
 
+            /**
+             * Process some piece of built queue of data (that pushed by method 'publish')
+             * @param chunks - list of files that must be added to the table.
+             */
             @Override
             protected void process(List<File> chunks){
-                File[] tmp = new File[chunks.size()];
+                File[] tmp = new File[chunks.size()];    // transform List to array
                 for (int i=0; i < chunks.size(); i++){
                     tmp[i] = chunks.get(i);
                 }
                 setTableData(tmp, true);
             }
 
+
+            /**
+             * Finish the work.
+             */
             protected void done(){
+
                 progressBar.setIndeterminate(false);
                 progressBar.setVisible(false);
                 stop.setVisible(false);
@@ -707,14 +877,21 @@ public class FileManager {
         worker.execute();
     }
 
-    /** Add the files that are contained within the directory of this node.
-     Thanks to Hovercraft Full Of Eels. */
+    /**
+     * Add the files that are contained within the directory of this node.
+     */
     private void showChildren(final DefaultMutableTreeNode node) {
         tree.setEnabled(false);
         progressBar.setVisible(true);
         progressBar.setIndeterminate(true);
 
         SwingWorker<Void, File> worker = new SwingWorker<>() {
+
+            /**
+             * what it should do:
+             *    search all the required files and put them to the built queue in order to
+             *    add them to the table later.
+             */
             @Override
             protected Void doInBackground(){
                 File file = (File) node.getUserObject();
@@ -732,6 +909,10 @@ public class FileManager {
                 return null;
             }
 
+            /**
+             * Process some piece of built queue of data (that pushed by method 'publish')
+             * @param chunks - list of files that must be added to the table.
+             */
             @Override
             protected void process(List<File> chunks) {
                 for (File child : chunks) {
@@ -739,8 +920,12 @@ public class FileManager {
                 }
             }
 
+            /**
+             * Finish the work.
+             */
             @Override
             protected void done() {
+
                 progressBar.setIndeterminate(false);
                 progressBar.setVisible(false);
                 tree.setEnabled(true);
@@ -755,7 +940,6 @@ public class FileManager {
         Icon icon = fileSystemView.getSystemIcon(file);
         fileName.setIcon(icon);
         fileName.setText(fileSystemView.getSystemDisplayName(file));
-//        path.setText(file.getPath());
         date.setText(new Date(file.lastModified()).toString());
         size.setText(file.length() + " bytes");
         path.setText(file.getAbsolutePath());
@@ -775,10 +959,6 @@ public class FileManager {
         }
 
         gui.repaint();
-    }
-
-    public static boolean copyFile(File from, File to) throws ExecutionControl.NotImplementedException {
-        throw new ExecutionControl.NotImplementedException("Not implemented.");
     }
 
     public static void main(String[] args) {

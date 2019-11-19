@@ -16,44 +16,62 @@ import java.util.Date;
  * Taras Shevchenko National University of Kyiv
  * email: davendiy@gmail.com
  *
- * A TableModel to hold File[].
+
+ * Class that implements table data model: storing getting necessary elements
+ * of table (cells).
+ *
+ * All the files are stored in one array. i-th row <-> i-th file.
+ *
+ * Supports the adding and setting new files.
  */
-
-
 class FileTableModel extends AbstractTableModel {
 
     private File[] files;
     private FileSystemView fileSystemView = FileSystemView.getFileSystemView();
+
+    // all the columns
     private String[] columns = {
             "Icon",
             "File",
             "Size",
             "Type",
             "Last Modified",
-            "R",
-            "W",
-            "E",
-//            "D",
-//            "F",
+            "R",               // readable
+            "W",               // writable
+            "E",               // editable
     };
 
+    /**
+     * Create empty data model.
+     */
     FileTableModel() {
         this(new File[0]);
     }
 
+    /**
+     * Create data model with given files.
+     */
     FileTableModel(File[] files) {
         this.files = files;
     }
 
+    /**
+     * Get information about required cell.
+     * @param row      - index of row (same as index in this.files)
+     * @param column   - index of column (same as index in this.columns)
+     * @return - corresponding object for each type of information
+     */
     @Override
     public Object getValueAt(int row, int column) {
         File file = files[row];
         switch (column) {
-            case 0:
+            case 0:          // icon of a file
                 return fileSystemView.getSystemIcon(file);
-            case 1:
+            case 1:          // name
                 return fileSystemView.getSystemDisplayName(file);
-            case 3:
+            case 2:          // size only for files
+                return (file.isDirectory()) ? "" : humanReadableByteCount(file.length(), true);
+            case 3:          // type of file
                 Path path = file.toPath();
                 String mimeType = "";
                 try {
@@ -71,9 +89,7 @@ class FileTableModel extends AbstractTableModel {
                 }
 
                 return mimeType;
-            case 2:
-                return humanReadableByteCount(file.length(), true);
-            case 4:
+            case 4:        // date of last modification
                 return file.lastModified();
             case 5:
                 return file.canRead();
@@ -81,10 +97,6 @@ class FileTableModel extends AbstractTableModel {
                 return file.canWrite();
             case 7:
                 return file.canExecute();
-//            case 8:
-//                return file.isDirectory();
-//            case 9:
-//                return file.isFile();
             default:
                 System.err.println("Logic Error");
         }
@@ -108,13 +120,18 @@ class FileTableModel extends AbstractTableModel {
             case 5:
             case 6:
             case 7:
-//            case 8:
-//            case 9:
                 return Boolean.class;
         }
         return String.class;
     }
 
+    /**
+     * Auxiliary method for converting bytes to human-readable view.
+     * @param bytes  - number of bytes
+     * @param si     - true if you need to get the simplified variant (kB, MB, where k ~ 1000, M ~ 1000 000)
+     *                 false if you need to get the digital view (MiB = 1024 KiB and so on)
+     * @return - corresponding string
+     */
     public static String humanReadableByteCount(long bytes, boolean si) {
         int unit = si ? 1000 : 1024;
         if (bytes < unit) return bytes + " B";
